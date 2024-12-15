@@ -1,0 +1,7 @@
+CAN ID,Attack Type,Baseline Oacc,Attack Oacc,Identification Error,CUSUM Deviation
+080,Fabrication Attack,411.7788,390.5282,-21.2506,-0.0000
+080,Suspension Attack,411.7788,412.6356,0.8568,0.0000
+100,Fabrication Attack,407.4085,390.2755,-17.1330,0.0000
+100,Suspension Attack,407.4085,412.6407,5.2322,-0.0000
+180,Fabrication Attack,404.5564,390.3644,-14.1920,0.0000
+180,Suspension Attack,404.5564,412.1115,7.5551,-0.0000

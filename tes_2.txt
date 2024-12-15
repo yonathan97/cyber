@@ -1,0 +1,207 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+# Step 1: Load the dataset
+# Step 1: Load the dataset with proper metadata handling
+def load_data(folder_path):
+    """Load and clean CAN bus voltage data by skipping metadata rows dynamically."""
+    try:
+        all_dataframes = []
+        file_count = 0
+
+        for file in os.listdir(folder_path):
+            if file.endswith(".csv"):
+                file_path = os.path.join(folder_path, file)
+                print(f"Processing file: {file}")
+
+                # Find the actual header row dynamically
+                with open(file_path, 'r') as f:
+                    lines = f.readlines()
+
+                header_index = -1
+                for i, line in enumerate(lines):
+                    if "Time" in line and "Channel A" in line and "Channel B" in line:
+                        header_index = i
+                        break
+
+                if header_index == -1:
+                    print(f"Warning: No valid header found in {file}. Skipping.")
+                    continue
+
+                # Load the data starting from the detected header row
+                df = pd.read_csv(file_path, skiprows=header_index, on_bad_lines='skip')
+
+                # Ensure columns are properly named
+                df.columns = ['Time (ms)', 'Channel A (V)', 'Channel B (V)']
+
+                # Convert columns to numeric, drop invalid rows
+                df['Time (ms)'] = pd.to_numeric(df['Time (ms)'], errors='coerce')
+                df['Channel A (V)'] = pd.to_numeric(df['Channel A (V)'], errors='coerce')
+                df['Channel B (V)'] = pd.to_numeric(df['Channel B (V)'], errors='coerce')
+                df = df.dropna(subset=['Time (ms)', 'Channel A (V)', 'Channel B (V)'])
+
+                all_dataframes.append(df)
+                file_count += 1
+
+                if file_count >= 50:
+                    print("Loaded first 50 CSV files.")
+                    break
+
+        # Combine all cleaned dataframes
+        if all_dataframes:
+            combined_df = pd.concat(all_dataframes, ignore_index=True)
+            combined_df = combined_df.sort_values(by='Time (ms)').reset_index(drop=True)
+            return combined_df
+        else:
+            print("No valid data found.")
+            return pd.DataFrame()
+
+    except Exception as e:
+        print("Error loading files:", e)
+        return pd.DataFrame()
+
+# Step 2: Analyze the legitimate voltage thresholds
+def analyze_voltages(df):
+    """Analyze mean and standard deviation for Channel A and Channel B voltages."""
+    mean_a = df['Channel A (V)'].mean()
+    std_a = df['Channel A (V)'].std()
+    mean_b = df['Channel B (V)'].mean()
+    std_b = df['Channel B (V)'].std()
+
+    print(f"Channel A Voltage - Mean: {mean_a:.4f} V, Std Dev: {std_a:.4f} V")
+    print(f"Channel B Voltage - Mean: {mean_b:.4f} V, Std Dev: {std_b:.4f} V\n")
+
+    return (mean_a, std_a), (mean_b, std_b)
+
+# Step 3: Calculate Time Intervals and Accumulated Offsets
+def calculate_time_intervals(df):
+    """Calculate time intervals (delta time) and accumulated offsets."""
+    df['Time Diff (ms)'] = df['Time (ms)'].diff().fillna(0)
+    df['Oacc'] = df['Time Diff (ms)'].cumsum()
+    return df
+
+# Step 4: Simulate continuous fabrication attack
+def simulate_fabrication_attack_continuous(df, mean_a, mean_b, duration=0.01):
+    """Generate a continuous fabricated CAN message over a specified duration."""
+    time_step = 0.002  # Step size for fabricated messages
+    start_time = df['Time (ms)'].iloc[-1] + time_step
+    fabricated_data = []
+    for i in range(int(duration / time_step)):
+        fabricated_data.append({
+            'Time (ms)': start_time + i * time_step,
+            'Channel A (V)': mean_a + 0.05,  # Slightly higher voltage
+            'Channel B (V)': mean_b + 0.05
+        })
+    fabricated_df = pd.DataFrame(fabricated_data)
+    return pd.concat([df, fabricated_df], ignore_index=True), fabricated_df
+
+# Step 5: Simulate continuous masquerading attack
+def simulate_masquerading_attack_continuous(df, target_mean_a, target_mean_b, duration=0.01):
+    """Generate a continuous masqueraded CAN message over a specified duration."""
+    time_step = 0.002
+    start_time = df['Time (ms)'].iloc[-1] + time_step
+    masqueraded_data = []
+    for i in range(int(duration / time_step)):
+        masqueraded_data.append({
+            'Time (ms)': start_time + i * time_step,
+            'Channel A (V)': target_mean_a,  # Mimic the target ECU
+            'Channel B (V)': target_mean_b
+        })
+    masqueraded_df = pd.DataFrame(masqueraded_data)
+    return pd.concat([df, masqueraded_df], ignore_index=True), masqueraded_df
+
+# Step 6: Detect anomalies using CUSUM
+def cusum_detection(series, threshold):
+    """Apply CUSUM detection for anomalies."""
+    cusum = np.cumsum(series - series.mean())
+    anomalies = np.where(np.abs(cusum) > threshold)[0]
+    return anomalies
+
+# Step 7: Plot Results
+
+# Plot Accumulated Clock Offsets With/Without Attack
+def plot_accumulated_offsets(df, before_attack_df, attack_df):
+    plt.figure(figsize=(10, 6))
+    plt.plot(before_attack_df['Time (ms)'], before_attack_df['Oacc'], label='w/o Attack', linestyle='--', color='blue')
+    plt.plot(attack_df['Time (ms)'], attack_df['Oacc'], label='w/ Attack', color='red')
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Accumulated Clock Offset (Oacc)')
+    plt.title('Accumulated Clock Offsets Before and After Attack')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+# Plot Identification Error With/Without Attack
+def plot_identification_error(df, before_attack_df, attack_df):
+    identification_error_before = before_attack_df['Oacc'] - before_attack_df['Oacc'].mean()
+    identification_error_after = attack_df['Oacc'] - attack_df['Oacc'].mean()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(before_attack_df['Time (ms)'], identification_error_before, label='w/o Attack', linestyle='--', color='blue')
+    plt.plot(attack_df['Time (ms)'], identification_error_after, label='w/ Attack', color='red')
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Identification Error')
+    plt.title('Identification Error Before and After Attack')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+# Plot Upper Control Limit With/Without Attack
+def plot_upper_control_limits(df, before_attack_df, attack_df):
+    ucl = before_attack_df['Oacc'].mean() + 3 * before_attack_df['Oacc'].std()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(before_attack_df['Time (ms)'], before_attack_df['Oacc'], label='w/o Attack', linestyle='--', color='blue')
+    plt.plot(attack_df['Time (ms)'], attack_df['Oacc'], label='w/ Attack', color='red')
+    plt.axhline(y=ucl, color='purple', linestyle='--', label='Upper Control Limit (UCL)')
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Upper Control Limit (Oacc)')
+    plt.title('Upper Control Limit Before and After Attack')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+# Updated Main Function
+def main():
+    folder_path = "Dacia Duster"  # Replace with the folder path containing CSV files
+
+    combined_df = load_data(folder_path)
+
+    if combined_df.empty:
+        print("No valid data found.")
+        return
+
+    print(f"Total combined data size: {combined_df.shape}\n")
+
+    # Step 3: Calculate Time Intervals and Accumulated Offsets
+    combined_df = calculate_time_intervals(combined_df)
+    print("Time intervals and accumulated offsets added.")
+
+    # Analyze Legitimate Voltages
+    (mean_a, std_a), (mean_b, std_b) = analyze_voltages(combined_df)
+
+    # Create a "before attack" dataset
+    before_attack_df = combined_df.copy()
+
+    # Simulate Fabrication and Masquerading Attacks
+    combined_df, fabricated_df = simulate_fabrication_attack_continuous(combined_df, mean_a, mean_b)
+    combined_df, masqueraded_df = simulate_masquerading_attack_continuous(combined_df, mean_a, mean_b)
+
+    # Combine both attack datasets for "after attack" view
+    attack_df = calculate_time_intervals(combined_df)
+
+    # Plot Results
+    print("Plotting Accumulated Clock Offsets...")
+    plot_accumulated_offsets(combined_df, before_attack_df, attack_df)
+
+    print("Plotting Identification Error...")
+    plot_identification_error(combined_df, before_attack_df, attack_df)
+
+    print("Plotting Upper Control Limits...")
+    plot_upper_control_limits(combined_df, before_attack_df, attack_df)
+
+if __name__ == "__main__":
+    main()
+
